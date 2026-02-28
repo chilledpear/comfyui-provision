@@ -3,7 +3,6 @@
 # Combines: RTX 5090 flags + Model downloads + Custom nodes
 #
 # Removed vs upstream "Full Prov":
-#   - Gemma 3 12B text encoder (not used — pipeline uses checkpoint CLIP directly)
 #   - LTX-2 distilled checkpoint (not used — pipeline uses dev only)
 
 set -e
@@ -228,6 +227,55 @@ else
 fi
 
 # ============================================
+# PART 4.5: DOWNLOAD GEMMA 3 12B TEXT ENCODER
+# ============================================
+# Required by LTXVGemmaCLIPModelLoader — loads from text_encoders/ directory.
+# Uses unsloth/gemma-3-12b-it-bnb-4bit (public, no HF gating).
+# The loader calls transformers from_pretrained() on the directory,
+# so we need the full HF repo: both safetensors shards + all config files.
+echo ""
+echo "--- Downloading Gemma 3 12B Text Encoder (bnb 4-bit) ---"
+
+GEMMA_DIR="$COMFY_ROOT/models/text_encoders/gemma-3-12b-it-bnb-4bit"
+GEMMA_HF="https://huggingface.co/unsloth/gemma-3-12b-it-bnb-4bit/resolve/main"
+mkdir -p "$GEMMA_DIR"
+cd "$GEMMA_DIR"
+
+# Helper: download a file if missing (wget with resume support)
+dl_gemma() {
+    local fname="$1"
+    if [ ! -f "$fname" ]; then
+        echo "  Downloading $fname..."
+        wget -c -q --show-progress -O "$fname" "$GEMMA_HF/$fname"
+    else
+        echo "  Already exists: $fname"
+    fi
+}
+
+# Model weights (~7.8 GB total)
+dl_gemma "model-00001-of-00002.safetensors"
+dl_gemma "model-00002-of-00002.safetensors"
+dl_gemma "model.safetensors.index.json"
+
+# Config files (required by from_pretrained)
+dl_gemma "config.json"
+dl_gemma "generation_config.json"
+
+# Tokenizer files
+dl_gemma "tokenizer.model"
+dl_gemma "tokenizer.json"
+dl_gemma "tokenizer_config.json"
+dl_gemma "special_tokens_map.json"
+dl_gemma "added_tokens.json"
+
+# Processor files (needed by Gemma3Processor for image understanding)
+dl_gemma "preprocessor_config.json"
+dl_gemma "processor_config.json"
+dl_gemma "chat_template.json"
+
+echo "  Gemma 3 12B download complete"
+
+# ============================================
 # PART 5: DOWNLOAD Z-IMAGE-TURBO (SPLIT FILES)
 # ============================================
 echo ""
@@ -323,6 +371,11 @@ check_file "$COMFY_ROOT/models/checkpoints/ltx-2-19b-dev-fp8.safetensors"
 echo "LTX Upscaler:"
 check_file "$COMFY_ROOT/models/latent_upscale_models/ltx-2-spatial-upscaler-x2-1.0.safetensors"
 
+echo "Gemma 3 12B Text Encoder:"
+check_file "$COMFY_ROOT/models/text_encoders/gemma-3-12b-it-bnb-4bit/model-00001-of-00002.safetensors"
+check_file "$COMFY_ROOT/models/text_encoders/gemma-3-12b-it-bnb-4bit/model-00002-of-00002.safetensors"
+check_file "$COMFY_ROOT/models/text_encoders/gemma-3-12b-it-bnb-4bit/config.json"
+
 echo "LoRAs:"
 check_file "$COMFY_ROOT/models/loras/ltx-2-19b-distilled-lora-384.safetensors"
 check_file "$COMFY_ROOT/models/loras/LTX/ltx-2-19b-lora-camera-control-static.safetensors"
@@ -334,7 +387,7 @@ check_file "$COMFY_ROOT/models/vae/z_image_turbo_ae.safetensors"
 
 echo ""
 if [ -z "$MISSING" ]; then
-    echo "ALL 7 MODELS VERIFIED SUCCESSFULLY!"
+    echo "ALL 10 KEY FILES VERIFIED SUCCESSFULLY!"
 else
     echo "WARNING: Some models are missing. Check above for details."
 fi
